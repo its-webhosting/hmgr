@@ -3,7 +3,7 @@
 HostsManager is a simple program designed to manage your etc/hosts file using a gui
 ## Installation
 
-Download the latest release from the [Releases](https://github.com/its-webhosting/hgmr/releases) page.
+Download the latest release from the [Releases](https://github.com/its-webhosting/hmgr/releases) page.
 ## Development Setup
 
 Development of this project has been setup for Windows and Mac using either Bun or NPM.
