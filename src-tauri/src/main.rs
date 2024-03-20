@@ -13,20 +13,6 @@ struct Payload {
     cwd: String,
 }
 
-fn test_mac_perms() -> std::io::Result<()> {
-    let file = read_to_string("/etc/hosts")?;
-    // Try to write to file to check perms
-    write("/etc/hosts", file)?;
-    Ok(())
-}
-
-fn test_win_perms() -> std::io::Result<()> {
-    let file = read_to_string("C:\\Windows\\System32\\drivers\\etc\\hosts")?;
-    // Try to write to file to check perms
-    write("C:\\Windows\\System32\\drivers\\etc\\hosts", file)?;
-    Ok(())
-}
-
 #[tauri::command]
 fn open_hosts() {
     if cfg!(target_os = "macos") {
@@ -64,13 +50,30 @@ fn save_hosts(hosts_string: &str) {
 }
 
 fn main() {
-    // Promise to check file perms
-    if cfg!(target_os = "macos") {
-        println!("Saving requires administrative permissions... Skipping for now.");
-    } else if cfg!(target_os = "linux") {
-        // linux_perms().unwrap();
-    } else if cfg!(target_os = "windows") {
-        test_win_perms().unwrap_or_else(|_| {
+    // Set File Location based on OS
+    let etc_file_loc = if cfg!(target_os = "windows") {
+        "C:\\Windows\\System32\\drivers\\etc\\hosts"
+    } else {
+        "/etc/hosts"
+    };
+    let hosts_backup: &str = &read_to_string(etc_file_loc).unwrap();
+    // Create a backup based on the contents of the file
+    if let Ok(file) = read_to_string(etc_file_loc) {
+        if !file.starts_with("#N Managed by Hosts Manager") {
+            // If not, create a backup
+            let hosts_backup_name = format!(
+                ".\\hosts-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            );
+            write(hosts_backup_name, hosts_backup).unwrap();
+        }
+    }
+    // try to write, fix file perms if fails
+    write(etc_file_loc, hosts_backup).unwrap_or_else(|_| {
+        if cfg!(target_os = "windows") {
             std::process::Command::new("powershell")
                 .arg("Start-Process")
                 .arg("cmd.exe")
@@ -83,31 +86,30 @@ fn main() {
                     println!("Failed to Fix File Permissions! Exiting...");
                     exit(1);
                 });
-        });
+        } else if cfg!(target_os = "mac") {
+            std::process::Command::new("osascript")
+                .arg("-e")
+                .arg(format!(
+                    "do shell script \"chmod 664 /etc/hosts\" with administrator privileges"
+                ))
+                .spawn()
+                .unwrap_or_else(|_| {
+                    println!("Failed to Fix File Permissions! Exiting...");
+                    exit(1);
+                });
+        } else if cfg!(target_os = "linux") {
+            println!("Not implemented yet!");
+            exit(1);
+        }
+        tauri::Builder::default()
+            .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+                println!("{}, {argv:?}, {cwd}", app.package_info().name);
 
-        // Make a backup of the hosts file
-        let hosts_backup = read_to_string("C:\\Windows\\System32\\drivers\\etc\\hosts").unwrap();
-        // Name file based on date and time
-        let hosts_backup_name = format!(
-            ".\\hosts-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-        );
-        write(hosts_backup_name, hosts_backup).unwrap();
-    }
-    // Promise Success
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            println!("{}, {argv:?}, {cwd}", app.package_info().name);
-
-            app.emit_all("single-instance", Payload { args: argv, cwd })
-                .unwrap();
-        }))
-        .invoke_handler(tauri::generate_handler![open_hosts, save_hosts])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
-    // Promise Fail
-    exit(0);
+                app.emit_all("single-instance", Payload { args: argv, cwd })
+                    .unwrap();
+            }))
+            .invoke_handler(tauri::generate_handler![open_hosts, save_hosts])
+            .run(tauri::generate_context!())
+            .expect("error while running tauri application");
+    });
 }
